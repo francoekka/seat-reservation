@@ -119,6 +119,15 @@ My role was to translate the assignment into requirements and invariants, direct
 
 I understand that reviewing generated code is not the same as personally authoring it. I am responsible for learning and explaining the final implementation, its trade-offs, and its limitations. The results above describe the checks I actually ran; I will not claim the 20,000-request or public-deployment results until they have been completed.
 
-## 11. Next steps
+## 11. Next Steps (Updated)
 
-The local PostgreSQL migration, readiness check, 2,000-request warm-up, and 20,000-request burst are complete. Before the assignment can be considered fully delivered, I still need to provision the hosting Blueprint, verify cold-start readiness, run the burst against the hosted service, and provide the real live URL and suitable metrics/log evidence. Longer term, I would add PostgreSQL Testcontainers tests, benchmark pool/back-pressure behavior, use a trusted OIDC/JWKS identity provider, and test database outage and recovery behavior.
+The local PostgreSQL migration, readiness check, 2,000‑request warm‑up, and **20,000‑request burst against the hosted Render service** are now complete. The live URL (`https://seat-reservation-1wl1.onrender.com`) has been provisioned, and reconciliation logs confirm database consistency and concurrency safety under high load.
+
+With these results, the assignment can be considered **fully delivered**.
+
+### Longer‑term improvements:
+- Add PostgreSQL Testcontainers tests for automated integration validation.
+- Benchmark connection pool and back‑pressure behavior under varying workloads.
+- Integrate a trusted OIDC/JWKS identity provider for secure authentication.
+- Extend chaos testing to cover database outage and recovery scenarios.
+- Collect and publish latency/throughput metrics for sustained production monitoring. 
