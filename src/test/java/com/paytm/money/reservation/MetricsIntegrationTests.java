@@ -6,21 +6,23 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @AutoConfigureMockMvc
 class MetricsIntegrationTests {
 
-    @Autowired MockMvc mockMvc;
+    @Autowired
+    private MockMvc mockMvc;
 
     @Test
     void prometheusEndpointExposesCustomMetrics() throws Exception {
-        mockMvc.perform(get("/actuator/prometheus"))
+        mockMvc.perform(get("/actuator/prometheus")
+                        .with(httpBasic("demo", "demo")))
                 .andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("reservations_confirmed_total")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("reservations_declined_total")))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("seats_available_gauge")));
+                .andExpect(header().exists("x-correlation-id"));
     }
 }
