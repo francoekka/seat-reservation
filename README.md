@@ -1,0 +1,1 @@
+I am building a high-concurrency seat reservation microservice for the Paytm Money backend engineering take-home assignment. The core challenge is zero double-sells under high-concurrency stampedes, strict idempotency, and full observability.
