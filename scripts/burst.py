@@ -59,19 +59,19 @@ def create_show(base: str, admin_token: str, name: str, seats: list[str]) -> str
     return body["show_id"]
 
 
-def print_distribution(label: str, results: list[tuple[int, dict]]) -> None:
+def print_distribution(label: str, results: list[tuple[int, dict]], decline_reason: str) -> None:
     counts: dict[str, int] = {}
     for status, body in results:
         if status == 201:
             bucket = "confirmed"
         elif status == 409:
-            message = str(body.get("message", "conflict")).lower()
-            if "limit" in message:
+            message = str(body.get("message", body.get("detail", "conflict"))).lower()
+            if "limit" in message or decline_reason == "per-user-limit":
                 bucket = "declined-per-user-limit"
-            elif "idempotency" in message:
+            elif "idempotency" in message or decline_reason == "idempotency":
                 bucket = "declined-idempotency"
             else:
-                bucket = "declined-seat-taken"
+                bucket = f"declined-{decline_reason}"
         elif status >= 500:
             bucket = "5xx-or-transport"
         else:
@@ -121,7 +121,7 @@ def main() -> int:
                                          user_token, {"seats": ["A12"]}, f"hot-{uuid.uuid4()}"))
         hot_results = [task.result() for task in hot_tasks]
 
-    print_distribution("hot-seat storm", hot_results)
+    print_distribution("hot-seat storm", hot_results, "seat-taken")
     hot_success = sum(status == 201 for status, _ in hot_results)
     hot_5xx = sum(status >= 500 for status, _ in hot_results)
     hot_valid = hot_success == 1 and hot_5xx == 0 and check_reconciliation(base, hot_show, admin_token)
@@ -133,7 +133,7 @@ def main() -> int:
                                    {"seats": [f"L{i}"]}, f"limit-{i}-{uuid.uuid4()}")
                        for i in range(1, 11)]
         limit_results = [task.result() for task in limit_tasks]
-    print_distribution("per-user limit", limit_results)
+    print_distribution("per-user limit", limit_results, "per-user-limit")
     limit_success = sum(status == 201 for status, _ in limit_results)
     limit_5xx = sum(status >= 500 for status, _ in limit_results)
     limit_valid = limit_success <= 4 and limit_5xx == 0 and check_reconciliation(base, limit_show, admin_token)

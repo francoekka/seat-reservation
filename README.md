@@ -8,11 +8,12 @@ This service uses PostgreSQL as the system of record. A reservation request is *
 - `mvn clean verify`
 - `docker compose up --build`
 - API: `http://localhost:8080`; PostgreSQL: `localhost:5432`.
+- If host port 5432 is already in use, set `POSTGRES_HOST_PORT=5433` before Compose startup; the app still connects to PostgreSQL on the internal port 5432.
 - Set `POSTGRES_PASSWORD` and `RESERVATION_JWT_SECRET` in the environment before using Compose. JWT secrets must be at least 32 bytes. Direct non-Compose startup deliberately fails if the JWT secret is missing.
 
 ### Authentication
 
-The API accepts short-lived HS256 bearer JWTs. The required `sub`, `iat`, and `exp` claims provide identity and expiry; show creation additionally requires `roles: ["ADMIN"]`. Deployments must inject a secret with `RESERVATION_JWT_SECRET` and issue tokens through a trusted identity provider. A helper for local testing is `python3 scripts/token.py buyer-1`; append `ADMIN` for a local admin token.
+The API accepts short-lived HS256 bearer JWTs. The required `sub`, `iat`, and `exp` claims provide identity and expiry; show creation additionally requires `roles: ["ADMIN"]`. Deployments must inject a secret with `RESERVATION_JWT_SECRET` and issue tokens through a trusted identity provider. A helper for local testing is `python3 scripts/mint_token.py buyer-1`; append `ADMIN` for a local admin token.
 
 ### API examples
 
@@ -68,4 +69,4 @@ Set `RESERVATION_JWT_SECRET` to the same key as the service. The script creates 
 
 ## AI use and system design
 
-See [WRITEUP.md](WRITEUP.md) for atomicity, idempotency, cancellation, partition behavior, operational alerting, limitations, and specific AI-use disclosure. Review the implementation and be prepared to explain it; generated code must be understood and verified before submission.
+See [WRITEUP.md](WRITEUP.md) for atomicity, idempotency, cancellation, partition behavior, operational alerting, limitations, and specific AI-use disclosure.

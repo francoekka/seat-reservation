@@ -1,8 +1,7 @@
 # Build stage: the image contains Maven; the repository does not depend on a wrapper.
-FROM maven:3.9.9-eclipse-temurin-25 AS build
+FROM maven:3.9.16-eclipse-temurin-25 AS build
 WORKDIR /app
 COPY pom.xml .
-RUN mvn -B -ntp dependency:go-offline
 COPY src ./src
 RUN mvn -B -ntp clean package -DskipTests
 
