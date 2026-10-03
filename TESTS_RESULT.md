@@ -8,8 +8,6 @@ This document describes a sequential functional validation suite and a high-conc
 - **Functional suite:** Token minting, show creation, seat reservation, idempotency, conflict handling, and state reconciliation
 - **Load test:** 2,000 requests with 50 worker threads
 
-> **Security note:** The supplied JWT secret is a credential. Keep it out of committed files, shared logs, and public repositories. If it is a real production secret, rotate it and use a secure secret-management mechanism.
-
 ## Prerequisites
 
 Run these commands in PowerShell from the project directory:
