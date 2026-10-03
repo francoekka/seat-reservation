@@ -8,6 +8,8 @@ import com.paytm.money.reservation.repository.ShowRepository;
 import com.paytm.money.reservation.repository.SeatRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -27,13 +29,19 @@ public class ShowAdminService {
      * Throws DataIntegrityViolationException if duplicate seat_number for the same show is attempted.
      */
     @Transactional
-    public CreateShowResponse createShow(CreateShowRequest req) {
+    public CreateShowResponse createShow(CreateShowRequest req, String userId) {
+        if (req.name() == null || req.name().isBlank() || req.seats() == null || req.seats().isEmpty()
+                || req.pricePaise() < 0 || req.seats().stream().anyMatch(s -> s == null || s.isBlank())
+                || new HashSet<>(req.seats()).size() != req.seats().size()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid show or seat details");
+        }
         UUID showId = UUID.randomUUID();
         ShowEntity show = new ShowEntity(showId, req.name(), req.seats().size());
+        show.setCreatedBy(userId);
         showRepo.save(show);
 
         List<SeatEntity> seats = req.seats().stream()
-                .map(s -> new SeatEntity(UUID.randomUUID(), showId, s.seatNumber(), s.pricePaise(), "AVAILABLE"))
+                .map(s -> new SeatEntity(UUID.randomUUID(), showId, s, req.pricePaise(), "AVAILABLE"))
                 .collect(Collectors.toList());
 
         seatRepo.saveAll(seats);

@@ -11,13 +11,24 @@ public class IdempotencyKeyEntity {
     @Id
     private UUID id;
 
+    @Column(name = "idempotency_key", nullable = false, unique = true)
     private String key;
+
+    @Column(name = "user_id", nullable = false)
     private String userId;
+
+    @Column(name = "show_id", nullable = false)
+    private UUID showId;
+    @Column(nullable = false)
     private String status;
 
+    @Column(name = "payload_hash", nullable = false)
     private String payloadHash;
+
+    @Column(name = "response_json")
     private String responseJson;
 
+    @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
     // --- Getters and Setters ---
@@ -29,6 +40,9 @@ public class IdempotencyKeyEntity {
 
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }
+
+    public UUID getShowId() { return showId; }
+    public void setShowId(UUID showId) { this.showId = showId; }
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }

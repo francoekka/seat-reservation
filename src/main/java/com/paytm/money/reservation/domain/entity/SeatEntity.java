@@ -17,7 +17,7 @@ public class SeatEntity {
     private String seatNumber;
 
     @Column(name = "price_paise", nullable = false)
-    private int pricePaise;
+    private long pricePaise;
 
     @Column(nullable = false)
     private String status; // AVAILABLE, HELD, CONFIRMED
@@ -33,7 +33,7 @@ public class SeatEntity {
 
     public SeatEntity() {}
 
-    public SeatEntity(UUID id, UUID showId, String seatNumber, int pricePaise, String status) {
+    public SeatEntity(UUID id, UUID showId, String seatNumber, long pricePaise, String status) {
         this.id = id;
         this.showId = showId;
         this.seatNumber = seatNumber;
@@ -49,8 +49,8 @@ public class SeatEntity {
     public void setShowId(UUID showId) { this.showId = showId; }
     public String getSeatNumber() { return seatNumber; }
     public void setSeatNumber(String seatNumber) { this.seatNumber = seatNumber; }
-    public int getPricePaise() { return pricePaise; }
-    public void setPricePaise(int pricePaise) { this.pricePaise = pricePaise; }
+    public long getPricePaise() { return pricePaise; }
+    public void setPricePaise(long pricePaise) { this.pricePaise = pricePaise; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public String getReservedByUserId() { return reservedByUserId; }

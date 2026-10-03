@@ -4,6 +4,8 @@ import com.paytm.money.reservation.domain.dto.ShowRequest;
 import com.paytm.money.reservation.domain.entity.ShowEntity;
 import com.paytm.money.reservation.repository.ShowRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.UUID;
@@ -17,13 +19,7 @@ public class ShowService {
     }
 
     public UUID createShow(ShowRequest req, String userId) {
-        ShowEntity show = new ShowEntity();
-        show.setId(UUID.randomUUID());
-        show.setName(req.getName());
-        show.setTotalSeats(req.getTotalSeats());
-        show.setCreatedBy(userId);
-        showRepository.save(show);
-        return show.getId();
+        throw new UnsupportedOperationException("Use ShowAdminService to create a show and its seats atomically");
     }
 
     public List<ShowEntity> listShows() {
@@ -32,7 +28,7 @@ public class ShowService {
 
     public ShowEntity getShow(UUID showId) {
         return showRepository.findById(showId)
-                .orElseThrow(() -> new RuntimeException("Show not found"));
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Show not found"));
     }
 
     public void deleteShow(UUID showId, String userId) {

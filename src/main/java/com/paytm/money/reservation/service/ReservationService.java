@@ -6,7 +6,9 @@ import com.paytm.money.reservation.domain.entity.ReservationEntity;
 import com.paytm.money.reservation.domain.entity.SeatEntity;
 import com.paytm.money.reservation.repository.IdempotencyKeyRepository;
 import com.paytm.money.reservation.repository.ReservationRepository;
+import com.paytm.money.reservation.repository.ReservationUserLockRepository;
 import com.paytm.money.reservation.repository.SeatRepository;
+import com.paytm.money.reservation.repository.ShowRepository;
 import com.paytm.money.reservation.util.HashUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +16,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -29,26 +33,28 @@ public class ReservationService {
     private final SeatRepository seatRepo;
     private final IdempotencyKeyRepository idempRepo;
     private final ReservationRepository reservationRepo;
+    private final ReservationUserLockRepository userLockRepo;
+    private final ShowRepository showRepo;
     private final ObjectMapper mapper;
     private final ReservationMetrics metrics; // may be null if not provided
 
     public ReservationService(SeatRepository seatRepo,
                               IdempotencyKeyRepository idempRepo,
                               ReservationRepository reservationRepo,
+                              ReservationUserLockRepository userLockRepo,
+                              ShowRepository showRepo,
                               ObjectMapper mapper,
                               ReservationMetrics metrics) {
         this.seatRepo = seatRepo;
         this.idempRepo = idempRepo;
         this.reservationRepo = reservationRepo;
+        this.userLockRepo = userLockRepo;
+        this.showRepo = showRepo;
         this.mapper = mapper;
         this.metrics = metrics;
     }
 
     // --- Metrics helpers ---
-    private void confirmReservation() {
-        if (metrics != null) metrics.incConfirmed();
-    }
-
     private void handleConflictSeatTaken() {
         if (metrics != null) metrics.incSeatTaken();
     }
@@ -61,60 +67,83 @@ public class ReservationService {
         if (metrics != null) metrics.incIdempotencyMismatch();
     }
 
-    private void updateAvailableSeatsCount(int availableCount) {
-        if (metrics != null) metrics.setSeatsAvailable(availableCount);
+    private void afterCommit(Runnable action) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            action.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                action.run();
+            }
+        });
+    }
+
+    private void refreshAvailableGauge(UUID showId) {
+        if (metrics != null) {
+            metrics.setSeatsAvailable(showId, seatRepo.countByShowIdAndStatus(showId, "AVAILABLE"));
+        }
     }
 
     // --- Core reservation ---
     @Transactional
-    public ResponseEntity<String> reserve(UUID showId, ReserveRequest req,
+    public ResponseEntity<Map<String, Object>> reserve(UUID showId, ReserveRequest req,
                                           String idempotencyKey,
-                                          String payloadJson,
                                           String userId) {
-        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+        if (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > 200) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing Idempotency-Key");
         }
-
-        String payloadHash = HashUtils.sha256Hex(payloadJson);
-
-        // 1. Try to insert PROCESSING row
-        int inserted = idempRepo.tryInsertProcessing(UUID.randomUUID(), idempotencyKey, payloadHash);
-        if (inserted > 0) {
-            log.debug("Inserted idempotency key {} as PROCESSING", idempotencyKey);
-        } else {
-            log.debug("Idempotency key {} already exists", idempotencyKey);
+        if (!showRepo.existsById(showId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Show not found");
         }
 
-        // 2. Lock idempotency row FOR UPDATE
-        var idempOpt = idempRepo.findByKeyForUpdate(idempotencyKey);
+        if (req == null || req.seats() == null || req.seats().isEmpty()
+                || req.seats().stream().anyMatch(seat -> seat == null || seat.isBlank())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "At least one valid seat is required");
+        }
+        List<String> requested = new ArrayList<>(req.seats());
+        if (new HashSet<>(requested).size() != requested.size()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Duplicate seats are not allowed");
+        }
+        Collections.sort(requested);
+
+        String scopedKey = HashUtils.sha256Hex(showId + "\n" + userId + "\n" + idempotencyKey);
+        String canonicalPayload = showId + "\n" + userId + "\n" + String.join("\n", requested);
+        String payloadHash = HashUtils.sha256Hex(canonicalPayload);
+
+        // A unique insert plus row lock serializes parallel retries of this scoped key.
+        idempRepo.tryInsertProcessing(UUID.randomUUID(), scopedKey, payloadHash, userId, showId);
+        var idempOpt = idempRepo.findByKeyForUpdate(scopedKey);
         if (idempOpt.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Idempotency conflict");
         }
         var idemp = idempOpt.get();
 
-        // 3. If COMPLETED, verify payload hash and return cached response
+        // Replays are scoped by authenticated user and show; the hash binds the sorted seat list.
         if ("COMPLETED".equals(idemp.getStatus())) {
             if (!Objects.equals(idemp.getPayloadHash(), payloadHash)) {
                 handleConflictIdempotencyMismatch();
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Idempotency payload mismatch");
             }
-            return ResponseEntity.status(201).body(idemp.getResponseJson());
+            if (metrics != null) metrics.incIdempotentReplay();
+            try {
+                return ResponseEntity.status(201).body(mapper.readValue(idemp.getResponseJson(),
+                        new com.fasterxml.jackson.core.type.TypeReference<>() {}));
+            } catch (Exception e) {
+                throw new IllegalStateException("Stored idempotent response is invalid", e);
+            }
         }
-
-        // 4. If PROCESSING but payload hash mismatches
         if (!Objects.equals(idemp.getPayloadHash(), payloadHash)) {
             handleConflictIdempotencyMismatch();
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Idempotency payload mismatch");
         }
 
-        // 5. Deadlock prevention
-        var requested = new ArrayList<>(req.seats());
-        if (requested.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No seats requested");
-        }
-        Collections.sort(requested);
+        // Serialize this caller's quota check across distinct seat requests.
+        userLockRepo.ensureLockRow(showId, userId);
+        userLockRepo.lockUser(showId, userId);
 
-        // 6. Lock seat rows FOR UPDATE
+        // All-or-nothing: seat rows are acquired in sorted order to avoid multi-seat deadlocks.
         List<SeatEntity> seats = seatRepo.lockSeatsForUpdate(showId, requested);
         if (seats.size() != requested.size()) {
             handleConflictSeatTaken();
@@ -157,20 +186,25 @@ public class ReservationService {
         reservation.setCreatedAt(Instant.now());
         reservationRepo.save(reservation);
 
-        // 10. Update idempotency row to COMPLETED
+        Map<String, Object> response = Map.of(
+                "reservation_id", reservationId.toString(),
+                "show_id", showId.toString(),
+                "user_id", userId,
+                "seats", requested,
+                "amount_paise", totalPaise,
+                "status", "confirmed"
+        );
         try {
-            var response = Map.of(
-                    "reservation_id", reservationId.toString(),
-                    "seats", requested,
-                    "total_price_paise", totalPaise
-            );
             String responseJson = mapper.writeValueAsString(response);
             idemp.setStatus("COMPLETED");
             idemp.setResponseJson(responseJson);
             idempRepo.save(idemp);
 
-            confirmReservation();
-            return ResponseEntity.status(201).body(responseJson);
+            afterCommit(() -> {
+                if (metrics != null) metrics.incConfirmed();
+                refreshAvailableGauge(showId);
+            });
+            return ResponseEntity.status(201).body(response);
         } catch (Exception e) {
             log.error("Failed to serialize reservation response", e);
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Serialization error");
@@ -203,9 +237,9 @@ public class ReservationService {
         }
 
         if ("CANCELLED".equalsIgnoreCase(reservation.getStatus())) {
-            List<String> existingSeats = reservation.getSeatIds() == null
-                    ? Collections.emptyList()
-                    : Arrays.stream(reservation.getSeatIds()).map(UUID::toString).collect(Collectors.toList());
+            List<String> existingSeats = reservation.getSeatIds() == null ? Collections.emptyList()
+                : seatRepo.findAllById(Arrays.asList(reservation.getSeatIds())).stream()
+                .map(SeatEntity::getSeatNumber).sorted().collect(Collectors.toList());
             return Map.of(
                     "reservation_id", reservation.getId().toString(),
                     "status", "CANCELLED",
@@ -224,6 +258,8 @@ public class ReservationService {
         reservation.setStatus("CANCELLED");
         reservation.setCancelledAt(Instant.now());
         reservationRepo.save(reservation);
+
+        afterCommit(() -> refreshAvailableGauge(reservation.getShowId()));
 
         // optional: you can add a metrics helper for cancelled if you want
         log.info("Cancelled reservation {} by user {} released seats {}", reservationId, userId,

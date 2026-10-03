@@ -1,11 +1,11 @@
 package com.paytm.money.reservation.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paytm.money.reservation.domain.dto.ReserveRequest;
 import com.paytm.money.reservation.domain.entity.ReservationEntity;
 import com.paytm.money.reservation.service.ReservationService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -15,11 +15,9 @@ import java.util.UUID;
 @RestController
 public class ReservationController {
     private final ReservationService reservationService;
-    private final ObjectMapper mapper;
 
-    public ReservationController(ReservationService reservationService, ObjectMapper mapper) {
+    public ReservationController(ReservationService reservationService) {
         this.reservationService = reservationService;
-        this.mapper = mapper;
     }
 
     /**
@@ -28,24 +26,14 @@ public class ReservationController {
      * Body: ReserveRequest
      */
     @PostMapping("/shows/{showId}/reserve")
-    public ResponseEntity<String> reserve(@PathVariable("showId") UUID showId,
+    public ResponseEntity<Map<String, Object>> reserve(@PathVariable("showId") UUID showId,
                                           @RequestHeader(value = "Idempotency-Key", required = true) String idempotencyKey,
                                           @RequestBody ReserveRequest req,
                                           Authentication authentication) {
-        if (authentication == null || authentication.getPrincipal() == null) {
+        if (!isAuthenticated(authentication)) {
             throw new ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED, "Unauthenticated");
         }
-        String userId = authentication.getPrincipal().toString();
-
-        try {
-            // Canonicalize payload: stable JSON string for hashing
-            String payloadJson = mapper.writeValueAsString(req);
-            return reservationService.reserve(showId, req, idempotencyKey, payloadJson, userId);
-        } catch (ResponseStatusException rse) {
-            throw rse;
-        } catch (Exception e) {
-            throw new ResponseStatusException(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR, "Reservation failed");
-        }
+        return reservationService.reserve(showId, req, idempotencyKey, authentication.getName());
     }
 
     /**
@@ -53,12 +41,12 @@ public class ReservationController {
      * Returns 200 if caller is owner, 403 if not, 404 if missing.
      */
     @PostMapping("/reservations/{reservationId}/verify-owner")
-    public ResponseEntity<Map<String, Object>> verifyOwner(@PathVariable UUID reservationId,
+    public ResponseEntity<Map<String, Object>> verifyOwner(@PathVariable("reservationId") UUID reservationId,
                                                            Authentication authentication) {
-        if (authentication == null || authentication.getPrincipal() == null) {
+        if (!isAuthenticated(authentication)) {
             throw new ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED, "Unauthenticated");
         }
-        String userId = authentication.getPrincipal().toString();
+        String userId = authentication.getName();
 
         // assertReservationOwnedBy will throw 404 or 403 as appropriate
         ReservationEntity reservation = reservationService.assertReservationOwnedBy(reservationId, userId);
@@ -75,14 +63,19 @@ public class ReservationController {
      * Idempotent: repeated cancels by owner return 200 OK.
      */
     @PostMapping("/reservations/{reservationId}/cancel")
-    public ResponseEntity<Map<String, Object>> cancelReservation(@PathVariable UUID reservationId,
+    public ResponseEntity<Map<String, Object>> cancelReservation(@PathVariable("reservationId") UUID reservationId,
                                                                  Authentication authentication) {
-        if (authentication == null || authentication.getPrincipal() == null) {
+        if (!isAuthenticated(authentication)) {
             throw new ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED, "Unauthenticated");
         }
-        String userId = authentication.getPrincipal().toString();
+        String userId = authentication.getName();
 
         Map<String, Object> resp = reservationService.cancelReservation(reservationId, userId);
         return ResponseEntity.ok(resp);
+    }
+
+    private boolean isAuthenticated(Authentication authentication) {
+        return authentication != null && authentication.isAuthenticated()
+                && !(authentication instanceof AnonymousAuthenticationToken);
     }
 }
