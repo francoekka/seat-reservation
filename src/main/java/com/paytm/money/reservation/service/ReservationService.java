@@ -25,6 +25,7 @@ public class ReservationService {
     private final ReservationRepository reservationRepo;
     private final ObjectMapper mapper;
     private final ReservationMetrics metrics;
+    private final ReservationRepository reservationRepo;
 
     public ReservationService(SeatRepository seatRepo,
                               IdempotencyKeyRepository idempRepo,
@@ -36,6 +37,10 @@ public class ReservationService {
         this.reservationRepo = reservationRepo;
         this.mapper = mapper;
         this.metrics = metrics;
+    }
+
+    public ReservationService(ReservationRepository reservationRepo) {
+        this.reservationRepo = reservationRepo;
     }
 
     private static String sha256(String s) {
@@ -155,5 +160,26 @@ public class ReservationService {
             log.error("Failed to serialize reservation response", e);
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Serialization error");
         }
+    }
+
+    /**
+     * Lock reservation row FOR UPDATE and assert that the provided userId is the owner.
+     * - Throws 404 if reservation not found.
+     * - Throws 403 if the token-derived userId is not the reservation owner.
+     *
+     * This method is transactional so the FOR UPDATE lock is held while the caller continues
+     * work in the same transaction (useful for cancellation where seats are released afterwards).
+     */
+    @Transactional
+    public ReservationEntity assertReservationOwnedBy(UUID reservationId, String userId) {
+        var opt = reservationRepo.findByIdForUpdate(reservationId);
+        if (opt.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Reservation not found");
+        }
+        ReservationEntity reservation = opt.get();
+        if (!reservation.getUserId().equals(userId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not reservation owner");
+        }
+        return reservation;
     }
 }
