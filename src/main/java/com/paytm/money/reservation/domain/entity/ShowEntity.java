@@ -1,4 +1,4 @@
-﻿package com.paytm.money.reservation.domain.entity;
+package com.paytm.money.reservation.domain.entity;
 
 import jakarta.persistence.*;
 import java.time.Instant;
@@ -19,6 +19,8 @@ public class ShowEntity {
   @Column(name = "created_at", nullable = false)
   private Instant createdAt = Instant.now();
 
+  private String createdBy;
+
   public ShowEntity() {}
 
   public ShowEntity(UUID id, String name, int totalSeats) {
@@ -28,12 +30,19 @@ public class ShowEntity {
     this.createdAt = Instant.now();
   }
 
-  // getters / setters
+  // --- Getters / Setters ---
   public UUID getId() { return id; }
   public void setId(UUID id) { this.id = id; }
+
   public String getName() { return name; }
   public void setName(String name) { this.name = name; }
+
   public int getTotalSeats() { return totalSeats; }
   public void setTotalSeats(int totalSeats) { this.totalSeats = totalSeats; }
+
   public Instant getCreatedAt() { return createdAt; }
+  public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+
+  public String getCreatedBy() { return createdBy; }
+  public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
 }

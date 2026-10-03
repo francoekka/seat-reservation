@@ -9,8 +9,11 @@ import org.springframework.test.web.servlet.MockMvc;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 
-@SpringBootTest
-@AutoConfigureMockMvc
+@SpringBootTest(
+        classes = SeatReservationApplication.class,
+        webEnvironment = SpringBootTest.WebEnvironment.MOCK
+)
+@AutoConfigureMockMvc(addFilters = true)
 class CorrelationIdFilterTests {
 
     @Autowired MockMvc mockMvc;

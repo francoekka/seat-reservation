@@ -7,7 +7,7 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class MetricsConfig {
 
-    @Bean
+    @Bean(name = "customReservationMetrics")
     public ReservationMetrics reservationMetrics(MeterRegistry registry) {
         return new ReservationMetrics(registry);
     }
