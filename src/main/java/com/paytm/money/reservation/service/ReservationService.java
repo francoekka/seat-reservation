@@ -32,7 +32,6 @@ public class ReservationService {
     private final ObjectMapper mapper;
     private final ReservationMetrics metrics; // may be null if not provided
 
-    // Single constructor for Spring DI. If you don't have metrics bean, pass null from config.
     public ReservationService(SeatRepository seatRepo,
                               IdempotencyKeyRepository idempRepo,
                               ReservationRepository reservationRepo,
@@ -45,30 +44,50 @@ public class ReservationService {
         this.metrics = metrics;
     }
 
-    /**
-     * Reserve seats atomically. Returns 201 with reservation JSON or throws ResponseStatusException(409).
-     * Idempotency-Key header must be provided by controller and payloadJson is the canonical request body string.
-     */
+    // --- Metrics helpers ---
+    private void confirmReservation() {
+        if (metrics != null) metrics.incConfirmed();
+    }
+
+    private void handleConflictSeatTaken() {
+        if (metrics != null) metrics.incSeatTaken();
+    }
+
+    private void handleConflictUserLimit() {
+        if (metrics != null) metrics.incUserLimit();
+    }
+
+    private void handleConflictIdempotencyMismatch() {
+        if (metrics != null) metrics.incIdempotencyMismatch();
+    }
+
+    private void updateAvailableSeatsCount(int availableCount) {
+        if (metrics != null) metrics.setSeatsAvailable(availableCount);
+    }
+
+    // --- Core reservation ---
     @Transactional
-    public ResponseEntity<String> reserve(UUID showId, ReserveRequest req, String idempotencyKey, String payloadJson, String userId) {
+    public ResponseEntity<String> reserve(UUID showId, ReserveRequest req,
+                                          String idempotencyKey,
+                                          String payloadJson,
+                                          String userId) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing Idempotency-Key");
         }
 
         String payloadHash = HashUtils.sha256Hex(payloadJson);
 
-        // 1. Try to insert PROCESSING row (non-blocking). If returns 0, row already exists.
-        int inserted = idempRepo.tryInsertProcessing(idempotencyKey, payloadHash);
+        // 1. Try to insert PROCESSING row
+        int inserted = idempRepo.tryInsertProcessing(UUID.randomUUID(), idempotencyKey, payloadHash);
         if (inserted > 0) {
             log.debug("Inserted idempotency key {} as PROCESSING", idempotencyKey);
         } else {
             log.debug("Idempotency key {} already exists", idempotencyKey);
         }
 
-        // 2. Lock idempotency row FOR UPDATE to serialize in-flight identical keys
+        // 2. Lock idempotency row FOR UPDATE
         var idempOpt = idempRepo.findByKeyForUpdate(idempotencyKey);
         if (idempOpt.isEmpty()) {
-            // Defensive: should not happen
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Idempotency conflict");
         }
         var idemp = idempOpt.get();
@@ -76,44 +95,44 @@ public class ReservationService {
         // 3. If COMPLETED, verify payload hash and return cached response
         if ("COMPLETED".equals(idemp.getStatus())) {
             if (!Objects.equals(idemp.getPayloadHash(), payloadHash)) {
-                if (metrics != null) metrics.incrementDeclined("idempotency_mismatch");
+                handleConflictIdempotencyMismatch();
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Idempotency payload mismatch");
             }
             return ResponseEntity.status(201).body(idemp.getResponseJson());
         }
 
-        // 4. If PROCESSING but payload hash mismatches, reject
+        // 4. If PROCESSING but payload hash mismatches
         if (!Objects.equals(idemp.getPayloadHash(), payloadHash)) {
-            if (metrics != null) metrics.incrementDeclined("idempotency_mismatch");
+            handleConflictIdempotencyMismatch();
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Idempotency payload mismatch");
         }
 
-        // 5. Deadlock prevention: deterministic ordering
+        // 5. Deadlock prevention
         var requested = new ArrayList<>(req.seats());
         if (requested.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No seats requested");
         }
         Collections.sort(requested);
 
-        // 6. Lock seat rows FOR UPDATE in deterministic order
+        // 6. Lock seat rows FOR UPDATE
         List<SeatEntity> seats = seatRepo.lockSeatsForUpdate(showId, requested);
         if (seats.size() != requested.size()) {
-            if (metrics != null) metrics.incrementDeclined("seat_taken");
+            handleConflictSeatTaken();
             throw new ResponseStatusException(HttpStatus.CONFLICT, "One or more seats missing or already taken");
         }
 
         // 7. Validate availability
         for (SeatEntity s : seats) {
             if (!"AVAILABLE".equals(s.getStatus())) {
-                if (metrics != null) metrics.incrementDeclined("seat_taken");
+                handleConflictSeatTaken();
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Seat not available: " + s.getSeatNumber());
             }
         }
 
-        // 8. Per-user limit check (locked count)
+        // 8. Per-user limit check
         int existing = seatRepo.countHeldOrConfirmedByUser(showId, userId);
         if (existing + seats.size() > PER_USER_LIMIT) {
-            if (metrics != null) metrics.incrementDeclined("user_limit_exceeded");
+            handleConflictUserLimit();
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Per-user limit exceeded");
         }
 
@@ -126,7 +145,6 @@ public class ReservationService {
             s.setReservedByUserId(userId);
             s.setReservationId(reservationId);
         }
-        // batch save
         seatRepo.saveAll(seats);
 
         ReservationEntity reservation = new ReservationEntity();
@@ -139,7 +157,7 @@ public class ReservationService {
         reservation.setCreatedAt(Instant.now());
         reservationRepo.save(reservation);
 
-        // 10. Update idempotency row to COMPLETED with response JSON
+        // 10. Update idempotency row to COMPLETED
         try {
             var response = Map.of(
                     "reservation_id", reservationId.toString(),
@@ -151,7 +169,7 @@ public class ReservationService {
             idemp.setResponseJson(responseJson);
             idempRepo.save(idemp);
 
-            if (metrics != null) metrics.incrementConfirmed();
+            confirmReservation();
             return ResponseEntity.status(201).body(responseJson);
         } catch (Exception e) {
             log.error("Failed to serialize reservation response", e);
@@ -159,14 +177,6 @@ public class ReservationService {
         }
     }
 
-    /**
-     * Lock reservation row FOR UPDATE and assert that the provided userId is the owner.
-     * - Throws 404 if reservation not found.
-     * - Throws 403 if the token-derived userId is not the reservation owner.
-     *
-     * This method is transactional so the FOR UPDATE lock is held while the caller continues
-     * work in the same transaction (useful for cancellation where seats are released afterwards).
-     */
     @Transactional
     public ReservationEntity assertReservationOwnedBy(UUID reservationId, String userId) {
         var opt = reservationRepo.findByIdForUpdate(reservationId);
@@ -180,9 +190,6 @@ public class ReservationService {
         return reservation;
     }
 
-    /**
-     * Cancel a reservation atomically.
-     */
     @Transactional
     public Map<String, Object> cancelReservation(UUID reservationId, String userId) {
         var opt = reservationRepo.findByIdForUpdate(reservationId);
@@ -207,7 +214,6 @@ public class ReservationService {
         }
 
         List<SeatEntity> seats = seatRepo.findByReservationIdForUpdate(reservationId);
-
         for (SeatEntity s : seats) {
             s.setStatus("AVAILABLE");
             s.setReservedByUserId(null);
@@ -216,21 +222,17 @@ public class ReservationService {
         seatRepo.saveAll(seats);
 
         reservation.setStatus("CANCELLED");
-        reservation.setCancelledAt(Instant.now()); // ensure field exists
+        reservation.setCancelledAt(Instant.now());
         reservationRepo.save(reservation);
 
-        try {
-            if (metrics != null) metrics.incrementCancelled();
-        } catch (Exception e) {
-            log.debug("Metrics increment failed", e);
-        }
-        List<String> releasedSeatNumbers = seats.stream().map(SeatEntity::getSeatNumber).collect(Collectors.toList());
-        log.info("Cancelled reservation {} by user {} released seats {}", reservationId, userId, releasedSeatNumbers);
+        // optional: you can add a metrics helper for cancelled if you want
+        log.info("Cancelled reservation {} by user {} released seats {}", reservationId, userId,
+                seats.stream().map(SeatEntity::getSeatNumber).collect(Collectors.toList()));
 
         return Map.of(
                 "reservation_id", reservationId.toString(),
                 "status", "CANCELLED",
-                "seats", releasedSeatNumbers
+                "seats", seats.stream().map(SeatEntity::getSeatNumber).collect(Collectors.toList())
         );
     }
 }
