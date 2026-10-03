@@ -1,6 +1,6 @@
 ## Seat Reservation at Scale
 
-This service uses PostgreSQL as the system of record. A reservation request is **all-or-nothing**: every requested seat is committed together or none is. Seat rows are locked using PostgreSQL `SELECT ... FOR UPDATE` in sorted seat-number order. A separate `(show_id,user_id)` lock row serializes a user's quota check across requests for different seats. H2 is used by fast local correctness tests; the production-only `ON CONFLICT` paths and PostgreSQL schema require a real PostgreSQL validation before making a deployment/concurrency claim.
+This service uses PostgreSQL as the system of record. A reservation request is **all-or-nothing**: every requested seat is committed together or none is. Seat rows are locked using PostgreSQL `SELECT ... FOR UPDATE` in sorted seat-number order. A separate `(show_id,user_id)` lock row serializes a user's quota check across requests for different seats. H2 is used by fast integration tests; the production PostgreSQL schema and locking paths have also been validated locally with Docker Compose. The 20,000-request local burst is documented below; hosted deployment and hosted load validation remain separate steps.
 
 ### Clean checkout: build and run
 
@@ -61,11 +61,34 @@ The repository contains a `render.yaml` Blueprint for a Docker web service and P
 
 ### Run the real HTTP burst
 
+The script uses the same JWT secret as the running app to sign its test tokens. In PowerShell, retrieve it from the local app container without printing it, then run a 2,000-request warm-up followed by the 20,000-request check:
+
+```powershell
+$env:RESERVATION_JWT_SECRET = (docker compose exec -T app sh -c 'printf "%s" "$RESERVATION_JWT_SECRET"').Trim()
+if ($env:RESERVATION_JWT_SECRET.Length -lt 32) {
+	throw "Could not read a valid signing secret from the app container."
+}
+
+$env:BURST_REQUESTS = "2000"
+$env:BURST_WORKERS = "100"
+python scripts/burst.py http://localhost:8080
+
+$env:BURST_REQUESTS = "20000"
+$env:BURST_WORKERS = "200"
+python scripts/burst.py http://localhost:8080
+```
+
+Do not generate a different secret while the app is running: the script signs tokens with the PowerShell value and the app verifies them with its configured value. Do not print, commit, or share the secret. If the containers are recreated with a new secret, retrieve the new value again.
+
+The local PostgreSQL runs completed successfully. The 2,000-request hot-seat run reported 1 confirmation and 1,999 seat-taken declines; the 20,000-request run reported 1 confirmation and 19,999 seat-taken declines. Both reported valid reconciliation, four confirmations and six per-user-limit declines in the limit scenario, and a successful same-key replay followed by a 409 for a changed body. Neither run reported a 5xx/transport bucket. These results are from local Docker Compose, not from a public hosted deployment.
+
+On macOS/Linux, after exporting the same signing secret into the shell, the wrapper can also be used:
+
 ```bash
 ./burst.sh http://localhost:8080
 ```
 
-Set `RESERVATION_JWT_SECRET` to the same key as the service. The script creates fresh shows and exercises the same hot seat with concurrent users, a concurrent 10-seat same-user quota attack, same-key retries, same-key/different-body rejection, and final reconciliation. It prints outcome distributions and exits non-zero if expectations fail. `BURST_REQUESTS` and `BURST_WORKERS` tune the hot-seat storm; the default is 20,000 requests. Use the same command with the deployed base URL after deployment.
+The script creates fresh shows and exercises the same hot seat with concurrent users, a concurrent 10-seat same-user quota attack, same-key retries, same-key/different-body rejection, and final reconciliation. It prints outcome distributions and exits non-zero if expectations fail. `BURST_REQUESTS` and `BURST_WORKERS` tune the hot-seat storm; defaults are 20,000 requests and 200 workers. Use the same procedure with the deployed base URL after deployment, using the deployment's configured secret securely.
 
 ## AI use and system design
 
