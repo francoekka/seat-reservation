@@ -1,6 +1,8 @@
 package com.paytm.money.reservation.domain.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -11,16 +13,26 @@ public class ReservationEntity {
     @Id
     private UUID id;
 
+    @Column(name = "show_id", nullable = false)
     private UUID showId;
+
+    @Column(name = "user_id", nullable = false)
     private String userId;
+
+    @Column(nullable = false)
     private String status;
 
+    @Column(name = "created_at", nullable = false)
     private Instant createdAt;
+
+    @Column(name = "cancelled_at")
     private Instant cancelledAt;
 
-    @Column(name = "seat_ids")
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(name = "seat_ids", nullable = false)
     private UUID[] seatIds;
 
+    @Column(name = "total_price_paise", nullable = false)
     private long totalPricePaise;
 
     // --- Getters and Setters ---

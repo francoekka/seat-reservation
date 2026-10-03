@@ -1,0 +1,29 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:seat_reservation_test;MODE=PostgreSQL;NON_KEYWORDS=KEY;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    defer-datasource-initialization: true
+  sql:
+    init:
+      mode: always
+  flyway:
+    enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+reservation:
+  auth:
+    jwt-secret: test-only-signing-secret-change-me-1234567890

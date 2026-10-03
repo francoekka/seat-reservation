@@ -9,8 +9,8 @@
     <packaging>jar</packaging>
 
     <properties>
-        <java.version>21</java.version>
-        <spring.boot.version>3.2.0</spring.boot.version>
+        <java.version>25</java.version>
+        <spring.boot.version>3.5.16</spring.boot.version>
     </properties>
 
     <dependencyManagement>
@@ -38,6 +38,10 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
         </dependency>
 
         <!-- Test -->
@@ -83,6 +87,11 @@
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
 
         <!-- Utilities -->
         <dependency>
@@ -99,7 +108,7 @@
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
-            <scope>runtime</scope>
+            <scope>test</scope>
         </dependency>
 
 
@@ -124,7 +133,7 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.13.0</version>
                 <configuration>
-                    <release>21</release>
+                    <release>${java.version}</release>
                 </configuration>
             </plugin>
         </plugins>
